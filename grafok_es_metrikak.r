@@ -72,11 +72,11 @@ IHMEcoverage_hosp <-lapply(startdates, function(x) coverage(IHMEpreds[startdate=
 IHMEcoverage_hosp_table <- data.table(startdates=startdates, IHMEcoverage_hosp=IHMEcoverage_hosp)
 IHMEcoverage_table <- merge(IHMEcoverage_deaths_table, IHMEcoverage_hosp_table)
 
-ggplot(IHMEcoverage_table, aes(x = startdates, y = as.numeric(IHMEcoverage_deaths), color= "deaths"))+geom_line()+geom_point() +xlab("prediction date") +ylab("MIS")
-ggsave("coverage_halal.pdf")
-
-ggplot(IHMEcoverage_table, aes(x = startdates, y = as.numeric(IHMEcoverage_deaths), color= "napi halálozás"))+ geom_ribbon(aes(x=startdates, ymin=0.95, ymax=1), fill = "grey80")+geom_line()+geom_point() +xlab("dátum") +ylab("a 95%-os konfidenciaintervallum lefedése")
-ggsave("coverage_halal.pdf")
+ggplot(IHMEcoverage_table, aes(x = startdates, y = as.numeric(IHMEcoverage_deaths), color= "deaths"))+geom_line()+geom_point() +xlab("prediction date") +ylab("coverage")
+ggsave("coverage_deaths.png")
+                           
+ggplot(IHMEcoverage_table, aes(x = startdates, y = as.numeric(IHMEcoverage_hosp), color= "deaths"))+geom_line()+geom_point() +xlab("prediction date") +ylab("coverage")
+ggsave("coverage_hosp.png")
 
 max_deaths_pred <-lapply(startdates, function(x) max(IHMEpreds[startdate==x]$deaths_mean))
 max_deaths_actual <- lapply(startdates, function(x) max(IHMEpreds[startdate==x]$new_deaths_smoothed))
