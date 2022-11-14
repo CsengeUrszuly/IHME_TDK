@@ -59,8 +59,8 @@ mis_hosp_table <- data.table(startdates=startdates, mis_hosp=mis_hosp)
 mis_table <- merge(mis_deaths_table, mis_hosp_table)
 
 #mis metrics from the Mexican article
-ggplot(mis_table, aes(x = startdates, y = as.numeric(mis_deaths), color= "deaths"))+geom_line()+geom_point() +geom_line(aes(y = as.numeric(mis_hosp), color = "hospital"))+geom_point(aes(y = as.numeric(mis_hosp), color = "hospital"))+xlab("prediction date") +ylab("MIS")
-
+ggplot(mis_table, aes(x = startdates, y = as.numeric(mis_deaths), color= "deaths"))+geom_line()+geom_point() +xlab("prediction date") +ylab("MIS")
+ggplot(mis_table, aes(x = startdates, y = as.numeric(mis_hosp), color= "hospital"))+geom_line()+geom_point() +xlab("prediction date") +ylab("MIS")
 
 coverage <- function(x,L,U){
   value <- mean(I(L < x & x < U))
