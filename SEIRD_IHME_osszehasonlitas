@@ -1,0 +1,36 @@
+#Here we use the Hungarian IHME predictions as IHMEpreds, and the SEIRD results as SEIRD_preds, obtained in the other codes
+
+#IHME predictions and actual data, daily hospital patients, hungarian labels
+ggplot(IHMEpreds, aes(x = date, y = allbed_mean, group = factor(startdate), color = factor(startdate))) + geom_line() + geom_line(aes(y = hosp_patients), color = "black")+ xlab("dátum") +ylab("kórházban ápoltak száma")
+ggsave("IHME_cut.pdf")
+
+IHMEpreds <- IHMEpreds[date<="2021-02-05"]
+
+SEIRDpreds$end_date <- SEIRDpreds$startdate
+SEIRDpreds$end_date <- lapply(SEIRDpreds$end_date, function(x) IHMEpreds[startdate ==x][which.max(IHMEpreds[startdate==x]$date),]$date)
+SEIRDpreds <- SEIRDpreds[date<=end_date]
+
+#SEIRD predictions and actual data, daily hospital patients, hungarian labels
+ggplot(SEIRDpreds, aes(x = date, y = H, group = factor(startdate), color = factor(startdate))) + geom_line() + geom_line(aes(y = hosp_patients), color = "black") + xlab("dátum") +ylab("kórházban ápoltak száma")
+ggsave("SEIRD_cut.pdf")
+
+save(SEIRDpreds, file = "SEIRD.RData")
+save(IHMEpreds, file = "IHME_cut.RData")
+
+IHME_SEIRD <- IHMEpreds
+IHME_SEIRD$H <- SEIRDpreds$H
+IHME_SEIRD$D <- SEIRDpreds$D
+save(IHME_SEIRD, file = "IHME_SEIRD.RData")
+
+startdates <-lubridate::ymd(substring(list.files(pattern = "*.xlsx"), 1, 10))
+mape_SEIRD <-lapply(startdates, function(x) MLmetrics::MAPE(IHME_SEIRD[startdate==x]$H,IHME_SEIRD[startdate==x]$hosp_patients ))
+mape_IHME <-lapply(startdates, function(x) MLmetrics::MAPE(IHME_SEIRD[startdate==x]$allbed_mean,IHME_SEIRD[startdate==x]$hosp_patients ))
+mape_SEIRD_table <- data.table(startdates=startdates, mape_SEIRD=mape_SEIRD)
+mape_IHME_table <- data.table(startdates=startdates, mape_IHME=mape_IHME)
+mape_table <- merge(mape_SEIRD_table, mape_IHME_table)
+
+#mean absolute percentage error comparison, hungarian labels
+ggplot(mape_table, aes(x = startdates, y = as.numeric(mape_IHME), color= "IHME MAPE"))+geom_point() +geom_line() +geom_point(aes(y = as.numeric(mape_SEIRD), color = "SEIRD MAPE"))+geom_line(aes(y = as.numeric(mape_SEIRD), color = "SEIRD MAPE")) +xlab("dátum") +ylab("MAPE")
+ggsave("MAPE_hasonlitas.pdf")
+
+
