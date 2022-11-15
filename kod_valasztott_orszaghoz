@@ -1,0 +1,161 @@
+#Austria can be changed to any other country with IHME predictions throughout the code
+
+RawData <- fread("https://covid.ourworldindata.org/data/owid-covid-data.csv")
+RawData <- RawData[location=="Austria"]
+RawData$date <- RawData$date - 1
+
+owid <- RawData[,c("date", "new_deaths_smoothed", "hosp_patients")]
+
+library(data.table)
+library(ggplot2)
+
+get_data <- function(data, country) {
+  data_name <- rio::import(data)
+  cols <- colnames(data_name)
+  newcols <- unlist(strsplit(cols, ","))
+  sep_data <-
+    tidyr::separate(data = data_name, col = cols, into = newcols, sep = ",")
+  names(sep_data) = gsub('"', "", names(sep_data))
+  sep_data[,"location_name"] = gsub('"', "", sep_data[,"location_name"] )
+  setDT(sep_data)
+  sep_data <- sep_data[location_name == country]
+  return(sep_data)
+}
+
+
+IHMEpreds <- rbindlist(lapply(list.files(pattern = "*.xlsx"), function(file) get_data(file, "Austria")[,c("location_name", "date", "deaths_lower", "deaths_mean", "deaths_upper", "allbed_lower", "allbed_mean", "allbed_upper")]), idcol = "startdate")
+IHMEpreds$startdate <- lubridate::ymd(substring(list.files(pattern = "*.xlsx"), 1, 10))[IHMEpreds$startdate]
+startdates <-lubridate::ymd(substring(list.files(pattern = "*.xlsx"), 1, 10))
+IHMEpreds$deaths_upper <- as.numeric(IHMEpreds$deaths_upper)
+IHMEpreds$deaths_lower <- as.numeric(IHMEpreds$deaths_lower)
+IHMEpreds$deaths_mean <- as.numeric(IHMEpreds$deaths_mean)
+IHMEpreds$allbed_lower <- as.numeric(IHMEpreds$allbed_lower)
+IHMEpreds$allbed_upper <- as.numeric(IHMEpreds$allbed_upper)
+IHMEpreds$allbed_mean <- as.numeric(IHMEpreds$allbed_mean)
+IHMEpreds$date <- lubridate::ymd(IHMEpreds$date)
+IHMEpreds  <- IHMEpreds[date>=startdate]
+IHMEpreds <- merge(IHMEpreds, owid)
+
+#predictions and actual data, daily deaths
+ggplot(IHMEpreds, aes(x = date, y = deaths_mean, group = factor(startdate), color = factor(startdate))) + geom_line() + geom_line(aes(y = new_deaths_smoothed), color = "black")
+ggsave("Austria_daily_deaths.png")
+
+#predictions and actual data, daily hospital patients
+ggplot(IHMEpreds, aes(x = date, y = allbed_mean, group = factor(startdate), color = factor(startdate))) + geom_line() + geom_line(aes(y = hosp_patients), color = "black")
+ggsave("Austria_hosp_patients.png")
+
+#predictions and actual data, daily deaths, hungarian labels
+ggplot(IHMEpreds, aes(x = date, y = deaths_mean, group = factor(startdate), color = factor(startdate))) + geom_line() + geom_line(aes(y = new_deaths_smoothed), color = "black") + xlab("dátum") +ylab("napi halálesetek száma")
+ggsave("Austria_napi_halal.png")
+
+#predictions and actual data, daily hospital patients, hungarian labels
+ggplot(IHMEpreds, aes(x = date, y = allbed_mean, group = factor(startdate), color = factor(startdate))) + geom_line() + geom_line(aes(y = hosp_patients), color = "black")+ xlab("dátum") +ylab("kórházban ápoltak száma")
+ggsave("Austria_korhaz.png")
+
+mape_deaths <-lapply(startdates, function(x) MLmetrics::MAPE(IHMEpreds[startdate==x]$deaths_mean,IHMEpreds[startdate==x]$new_deaths_smoothed ))
+mape_deaths_table <- data.table(startdates=startdates, mape_deaths=mape_deaths)
+mape_hosp <-lapply(startdates, function(x) MLmetrics::MAPE(IHMEpreds[startdate==x]$allbed_mean,IHMEpreds[startdate==x]$hosp_patients ))
+mape_hosp_table <- data.table(startdates=startdates, mape_hosp=mape_hosp)
+mape_table <- merge(mape_deaths_table, mape_hosp_table)
+
+#mean absolute percentage error 
+ggplot(mape_table, aes(x = startdates, y = as.numeric(mape_deaths), color= "deaths"))+geom_point() +geom_line() +geom_point(aes(y = as.numeric(mape_hosp), color = "hospital"))+geom_line(aes(y = as.numeric(mape_hosp), color = "hospital"))+xlab("prediction date") +ylab("MAPE")
+ggsave("Austria_MAPE.png")
+
+#mean absolute percentage error, hungarian labels
+ggplot(mape_table, aes(x = startdates, y = as.numeric(mape_deaths), color= "halálesetek"))+geom_point() +geom_line() +geom_point(aes(y = as.numeric(mape_hosp), color = "kórházban ápoltak"))+geom_line(aes(y = as.numeric(mape_hosp), color = "kórházban ápoltak"))+xlab("előrejelzés dátuma") +ylab("Átlagos abszolút eltérés")
+ggsave("Austria_MAPE_magyar.png")
+
+
+
+MIS <- function(x,L,U) {
+  value <-mean((U-L)+2/0.05*(L-x)*I(x < L) + 2/0.05*(x-U)*I(x > U))
+  return(value)
+}
+
+mis_deaths <-lapply(startdates, function(x) MIS(IHMEpreds[startdate==x]$new_deaths_smoothed, IHMEpreds[startdate==x]$deaths_lower, IHMEpreds[startdate==x]$deaths_upper))
+mis_deaths_table <- data.table(startdates=startdates, mis_deaths=mis_deaths)
+mis_hosp <-lapply(startdates, function(x) MIS(IHMEpreds[startdate==x]$hosp_patients,IHMEpreds[startdate==x]$allbed_lower,IHMEpreds[startdate==x]$allbed_upper))
+mis_hosp_table <- data.table(startdates=startdates, mis_hosp=mis_hosp)
+mis_table <- merge(mis_deaths_table, mis_hosp_table)
+
+#mis metrics from the Mexican article
+ggplot(mis_table, aes(x = startdates, y = as.numeric(mis_deaths), color= "deaths"))+geom_line()+geom_point() +geom_line(aes(y = as.numeric(mis_hosp), color = "hospital"))+geom_point(aes(y = as.numeric(mis_hosp), color = "hospital"))+xlab("prediction date") +ylab("MIS")
+ggsave("AUstria_MIS.png")
+
+#mis metrics from the Mexican article,hungarian labels
+ggplot(mis_table, aes(x = startdates, y = as.numeric(mis_deaths), color= "halálesetek"))+geom_line()+geom_point() +geom_line(aes(y = as.numeric(mis_hosp), color = "kórházban ápoltak"))+geom_point(aes(y = as.numeric(mis_hosp), color = "kórházban ápoltak"))+xlab("előrejelzés dátuma") +ylab("MIS")
+ggsave("Austria_MIS_magyar.png")
+
+max_deaths_pred <-lapply(startdates, function(x) max(IHMEpreds[startdate==x]$deaths_mean))
+max_deaths_actual <- lapply(startdates, function(x) max(IHMEpreds[startdate==x]$new_deaths_smoothed))
+max_deaths_table <- data.table(startdates=startdates, max_deaths_pred=max_deaths_pred, max_deaths_actual=max_deaths_actual)
+max_deaths_table$lower <- as.numeric(max_deaths_table$max_deaths_actual) * 0.8
+max_deaths_table$upper <- as.numeric(max_deaths_table$max_deaths_actual) * 1.2
+
+# predicted maximum values compared to actual maximum over the prediction intervals, daily deaths
+ggplot2::ggplot(max_deaths_table, ggplot2::aes(x = startdates, y = as.numeric(max_deaths_pred), color= "predicted maximum"))+ggplot2::geom_line()+ggplot2::geom_point() +ggplot2::geom_line(ggplot2::aes(y = as.numeric(max_deaths_actual), color = "actual smoothed maximum")) +ggplot2::geom_point(ggplot2::aes(y = as.numeric(max_deaths_actual), color = "actual smoothed maximum"))+ggplot2::xlab("prediction date") +ggplot2::ylab("max of deaths over the predicted interval")+ggplot2::geom_errorbar(ggplot2::aes(ymin = lower, ymax = upper, color="20% error interval"))
+ggsave("Austria_max_value_daily_deaths.png")
+
+# predicted maximum values compared to actual maximum over the prediction intervals, daily deaths, hungarian labels
+ggplot2::ggplot(max_deaths_table, ggplot2::aes(x = startdates, y = as.numeric(max_deaths_pred), color= "előrejelzett maximum érték"))+ggplot2::geom_line()+ggplot2::geom_point() +ggplot2::geom_line(ggplot2::aes(y = as.numeric(max_deaths_actual), color = "valódi (simított) maximum érték")) +ggplot2::geom_point(ggplot2::aes(y = as.numeric(max_deaths_actual), color = "valódi (simított) maximum érték"))+ggplot2::xlab("előrejelzés dátuma") +ggplot2::ylab("A halálesetek számának maximuma az előrejelzett időintervallumon")+ggplot2::geom_errorbar(ggplot2::aes(ymin = lower, ymax = upper, color="20%-os hiba intervallum"))
+ggsave("Austria_max_halal.png")
+
+
+max_hosp_pred <-lapply(startdates, function(x) max(IHMEpreds[startdate==x]$allbed_mean))
+max_hosp_actual <- lapply(startdates, function(x) max(IHMEpreds[startdate==x]$hosp_patients))
+max_hosp_table <- data.table(startdates=startdates, max_hosp_pred=max_hosp_pred, max_hosp_actual=max_hosp_actual)
+max_hosp_table$lower <- as.numeric(max_hosp_table$max_hosp_actual) * 0.8
+max_hosp_table$upper <- as.numeric(max_hosp_table$max_hosp_actual) * 1.2
+
+# predicted maximum values compared to actual maximum over the prediction intervals, hospital patients
+ggplot2::ggplot(max_hosp_table, ggplot2::aes(x = startdates, y = as.numeric(max_hosp_pred), color= "predicted maximum"))+ggplot2::geom_line()+ggplot2::geom_point() +ggplot2::geom_line(ggplot2::aes(y = as.numeric(max_hosp_actual), color = "actual smoothed maximum")) +ggplot2::geom_point(ggplot2::aes(y = as.numeric(max_hosp_actual), color = "actual smoothed maximum"))+ggplot2::xlab("prediction date") +ggplot2::ylab("max of hosp. patients over the predicted interval")+ggplot2::geom_errorbar(ggplot2::aes(ymin = lower, ymax = upper, color="20% error interval"))
+ggsave("Austria_max_value_hosp_patients.png")
+
+# predicted maximum values compared to actual maximum over the prediction intervals, hospital patients, hungarian labels
+ggplot2::ggplot(max_hosp_table, ggplot2::aes(x = startdates, y = as.numeric(max_hosp_pred), color= "előrejelzett maximum érték"))+ggplot2::geom_line()+ggplot2::geom_point() +ggplot2::geom_line(ggplot2::aes(y = as.numeric(max_hosp_actual), color = "valódi (simított) maximum érték")) +ggplot2::geom_point(ggplot2::aes(y = as.numeric(max_hosp_actual), color = "valódi (simított) maximum érték"))+ggplot2::xlab("előrejelzés dátuma") +ggplot2::ylab("A kórházban ápoltak számának maximuma az előrejelzett időintervallumon")+ggplot2::geom_errorbar(ggplot2::aes(ymin = lower, ymax = upper, color="20%-os hiba intervallum"))
+ggsave("Austria_max_korhaz.png")
+
+
+IHMEpreds$date <- as.character(IHMEpreds$date)
+max_deaths_pred <-lapply(startdates, function(x) IHMEpreds[startdate==x][which.max(IHMEpreds[startdate==x]$deaths_mean),]$date)
+max_deaths_actual <- lapply(startdates, function(x)IHMEpreds[startdate==x][which.max(IHMEpreds[startdate==x]$new_deaths_smoothed),]$date)
+max_deaths_table <- data.table(startdates=startdates, max_deaths_pred=max_deaths_pred, max_deaths_actual=max_deaths_actual)
+max_deaths_table$max_deaths_pred <- lubridate::ymd(max_deaths_table$max_deaths_pred)
+max_deaths_table$max_deaths_actual <- lubridate::ymd(max_deaths_table$max_deaths_actual)
+max_deaths_table$lower <- as.numeric(max_deaths_table$max_deaths_actual) * 0.8
+max_deaths_table$upper <- as.numeric(max_deaths_table$max_deaths_actual) * 1.2
+
+#predicted vs actual peak time, daily deaths
+ggplot2::ggplot(max_deaths_table, ggplot2::aes(x = startdates, y = max_deaths_pred, color= "predicted peak time"))+ggplot2::geom_point() +ggplot2::geom_line() +ggplot2::geom_point(ggplot2::aes(y = max_deaths_actual, color = "actual peak time")) +ggplot2::geom_line(ggplot2::aes(y = max_deaths_actual, color = "actual peak time"))+ggplot2::xlab("prediction date") +ggplot2::ylab("peak time of daily deaths over the predicted interval")
+ggsave("Austria_max_time_daily_deaths.png")
+
+#predicted vs actual peak time, daily deaths, hungarian labels
+ggplot2::ggplot(max_deaths_table, ggplot2::aes(x = startdates, y = max_deaths_pred, color= "előrejelzett tetőzés időpontja"))+ggplot2::geom_point() +ggplot2::geom_line() +ggplot2::geom_point(ggplot2::aes(y = max_deaths_actual, color = "valós tetőzés időpontja")) +ggplot2::geom_line(ggplot2::aes(y = max_deaths_actual, color = "valós tetőzés időpontja"))+ggplot2::xlab("előrejelzés dátuma") +ggplot2::ylab("napi halálesetek tetőzésének időpontja, az előrejelzett intervallumon")
+ggsave("Austria_max_ido_hala.png")
+
+
+
+max_hosp_pred <-lapply(startdates, function(x) IHMEpreds[startdate==x][which.max(IHMEpreds[startdate==x]$allbed_mean),]$date)
+max_hosp_actual <- lapply(startdates, function(x)IHMEpreds[startdate==x][which.max(IHMEpreds[startdate==x]$hosp_patients),]$date)
+max_hosp_table <- data.table(startdates=startdates, max_hosp_pred=max_hosp_pred, max_hosp_actual=max_hosp_actual)
+max_hosp_table$max_hosp_pred <- lubridate::ymd(max_hosp_table$max_hosp_pred)
+max_hosp_table$max_hosp_actual <- lubridate::ymd(max_hosp_table$max_hosp_actual)
+max_hosp_table$lower <- as.numeric(max_hosp_table$max_hosp_actual) * 0.8
+max_hosp_table$upper <- as.numeric(max_hosp_table$max_hosp_actual) * 1.2
+
+#predicted vs actual peak time, hospital patients
+ggplot2::ggplot(max_hosp_table, ggplot2::aes(x = startdates, y = max_hosp_pred, color= "predicted peak time"))+ggplot2::geom_point() +ggplot2::geom_line()+ggplot2::geom_point(ggplot2::aes(y = max_hosp_actual, color = "actual peak time")) +ggplot2::geom_line(ggplot2::aes(y = max_hosp_actual, color = "actual peak time"))+ggplot2::xlab("prediction date") +ggplot2::ylab("kórházban ápoltak tetőzésének időpontja, az előrejelzett intervallumon")
+ggsave("Austria_max_time_hosp_patients.png")
+
+#predicted vs actual peak time, hospital patients, hungarian labels
+ggplot2::ggplot(max_hosp_table, ggplot2::aes(x = startdates, y = max_hosp_pred, color= "előrejelzett tetőzés időpontja"))+ggplot2::geom_point() +ggplot2::geom_line()+ggplot2::geom_point(ggplot2::aes(y = max_hosp_actual, color = "valós tetőzés időpontja")) +ggplot2::geom_line(ggplot2::aes(y = max_hosp_actual, color = "valós tetőzés időpontja"))+ggplot2::xlab("előrejelzés dátuma") +ggplot2::ylab("")
+ggsave("Austria_max_ido_korhaz.png")
+
+IHME_preds_Austria <- IHMEpreds
+
+save(IHME_preds_Austria, file = "Austria.RData")
+
+
+
+
